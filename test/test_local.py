@@ -1,7 +1,10 @@
 import time
 import unittest
+import logging
 
 import canopen
+
+logging.basicConfig(level=logging.DEBUG)
 
 from .util import SAMPLE_EDS
 
@@ -37,22 +40,36 @@ class TestSDO(unittest.TestCase):
         vendor_id = self.remote_node.sdo[0x1400][1].raw
         self.assertEqual(vendor_id, 0x99)
 
-    def test_block_upload_switch_to_expedite_upload(self):
-        with self.assertRaises(canopen.SdoCommunicationError) as context:
-            with self.remote_node.sdo[0x1008].open('r', block_transfer=True) as fp:
-                pass
-        # We get this since the sdo client don't support the switch
-        # from block upload to expedite upload
-        self.assertEqual("Unexpected response 0x41", str(context.exception))
+    def test_block_upload(self):
+        # Test that block upload works correctly - must use block transfer, no fallbacks
+        test_data = "Test data for block transfer upload functionality"
+        self.local_node.sdo[0x2000].raw = test_data
+        
+        # Read back using explicit block transfer mode - this MUST work
+        with self.remote_node.sdo.open(0x2000, 0, mode="rb", block_transfer=True) as fp:
+            read_data = fp.read()
+        if isinstance(read_data, bytes):
+            read_data = read_data.decode('utf-8')
+        
+        # Verify the data matches
+        self.assertEqual(read_data, test_data)
 
-    def test_block_download_not_supported(self):
-        data = b"TEST DEVICE"
-        with self.assertRaises(canopen.SdoAbortedError) as context:
-            with self.remote_node.sdo[0x1008].open('wb',
-                                                   size=len(data),
-                                                   block_transfer=True) as fp:
-                pass
-        self.assertEqual(context.exception.code, 0x05040001)
+    def test_block_download(self):
+        # Test that block download works correctly - must use block transfer, no fallbacks
+        test_data = "Test data for block transfer download functionality"
+        
+        # Use object 0x2000 which is a writable string and supports larger data
+        # Write data using explicit block transfer mode - this MUST work
+        with self.remote_node.sdo.open(0x2000, 0, mode="wb", 
+                                       size=len(test_data.encode('utf-8')),
+                                       block_transfer=True) as fp:
+            fp.write(test_data.encode('utf-8'))
+        
+        # Verify the data was written correctly by reading it back
+        read_back_data = self.local_node.sdo.upload(0x2000, 0)
+        if isinstance(read_back_data, bytes):
+            read_back_data = read_back_data.decode('utf-8')
+        self.assertEqual(read_back_data, test_data)
 
     def test_expedited_upload_default_value_visible_string(self):
         device_name = self.remote_node.sdo["Manufacturer device name"].raw
